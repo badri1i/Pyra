@@ -9,11 +9,30 @@ export interface ContractSource {
 }
 
 export async function fetchContractSource(address: string): Promise<ContractSource> {
-  // --- FR-053 TEST TRIGGER ---
-  // If we target this specific fake address, force a verification failure
+  // --- GATE 3 TEST TRIGGER: Unverified Contract ---
   if (address === "0x0000000000000000000000000000000000000000") {
-    console.log("[Etherscan] Simulating Unverified Contract for FR-053");
+    console.log("[Etherscan] GATE 3 TEST: Simulating Unverified Contract");
     return { verified: false, sourceCode: "", name: "Unverified Trap" };
+  }
+
+  // --- GATE 4 TEST TRIGGER: Vulnerable Contract (BLOCK) ---
+  if (address === "0x1111111111111111111111111111111111111111") {
+    console.log("[Etherscan] GATE 4 TEST: Simulating Vulnerable Contract (BLOCK)");
+    return {
+      verified: true,
+      sourceCode: "contract VulnerableBank { function withdraw() { msg.sender.call{value: bal}(); } }",
+      name: "VulnerableBank"
+    };
+  }
+
+  // --- GATE 4 TEST TRIGGER: Warning Contract (WARN) ---
+  if (address === "0x2222222222222222222222222222222222222222") {
+    console.log("[Etherscan] GATE 4 TEST: Simulating Warning Contract (WARN)");
+    return {
+      verified: true,
+      sourceCode: "contract ProxyContract { function execute(address target, bytes data) { target.delegatecall(data); } }",
+      name: "ProxyContract"
+    };
   }
 
   // Simulator Bypass

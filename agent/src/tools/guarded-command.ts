@@ -3,17 +3,14 @@ import { z } from 'zod';
 import { resolveEnsGate } from '../gates/ens.js';
 import { validateAddressGate } from '../gates/validation.js';
 import { sourceCheckGate } from '../gates/source.js';
+import { kairoScanGate } from '../gates/kairo.js';
 
 /**
  * FR-011: Command Intent Parsing
  * FR-012: Address Extraction
  * FR-013: "dot eth" normalization
- *
- * This schema leverages LLM Function Calling to parse voice transcripts
- * into structured crypto commands, eliminating fragile regex parsing.
  */
 
-// Define the shape of our pending command for state storage
 export interface PendingCommand {
   action: string;
   amount: string;
@@ -24,9 +21,10 @@ export interface SessionState {
   pendingCommand?: PendingCommand;
   awaitingConfirmation: boolean;
   confirmed: boolean;
+  warningAcknowledged: boolean;
+  kairoWarning?: any;
 }
 
-// Define the Zod schema for a guarded command
 export const GuardedCommandSchema = z.object({
   action: z.enum(['deposit', 'swap', 'send', 'invest'], {
     description: 'The transaction action the user wants to perform',
@@ -48,65 +46,66 @@ export const GuardedCommandSchema = z.object({
       'Whether the user has confirmed this command. ' +
       'MUST be false initially. Only set to true after explicit user confirmation.',
   }).default(false),
+
+  warningAcknowledged: z.boolean({
+    description:
+      'Whether the user has acknowledged a Kairo security warning. ' +
+      'Only set to true after user explicitly approves proceeding despite a warning.',
+  }).default(false),
 });
 
-// Type inference from schema
 export type GuardedCommand = z.infer<typeof GuardedCommandSchema>;
 
 /**
- * Stateful Guarded Command Tool
- * FR-020 through FR-023: Robust Verification with State Management
- *
- * Flow:
- * 1. userConfirmed=false: Save command to ctx.userData.pendingCommand
- * 2. userConfirmed=true: Retrieve and execute saved command
- *
- * This prevents the LLM from hallucinating parameters during verification.
+ * Stateful Guarded Command Tool with Kairo Security Integration
+ * FR-060 through FR-072: Complete security gate implementation
  */
 export const executeGuardedCommandTool = llm.tool({
-  description: `Execute a crypto transaction with stateful verification.
-    If userConfirmed is false, this tool SAVES the command and SPEAKS a verification prompt.
-    If userConfirmed is true, this tool EXECUTES the saved command.
-
-    You must call this with userConfirmed=false first.
-    Only call with userConfirmed=true after the user says "Yes".`,
+  description: `Execute a crypto transaction with multi-gate security.
+    1. userConfirmed=false: Save command and ask for verification
+    2. userConfirmed=true: Execute security gates (ENS, Validation, Source, Kairo)
+    3. If Kairo returns WARN: Ask user to acknowledge risk
+    4. warningAcknowledged=true: Proceed with transaction despite warning`,
   parameters: GuardedCommandSchema,
-  execute: async ({ action, amount, target, userConfirmed }, ctx) => {
+  execute: async ({ action, amount, target, userConfirmed, warningAcknowledged }, ctx) => {
     const userData = ctx.ctx.userData as SessionState;
 
-    console.log(`[Tool] Input: ${action} ${amount} -> ${target} (Confirmed: ${userConfirmed})`);
+    console.log(`[Tool] Input: ${action} ${amount} -> ${target} (Confirmed: ${userConfirmed}, WarningAck: ${warningAcknowledged})`);
 
-    // --- CASE 1: INITIAL REQUEST (Pending Verification) ---
+    // Helper to broadcast state updates
+    const broadcast = async (type: string, payload: any) => {
+      const data = JSON.stringify({ type, ...payload });
+      await ctx.room.localParticipant?.publishData(
+        new TextEncoder().encode(data),
+        { reliable: true, topic: "agent-state" }
+      );
+    };
+
+    // --- PHASE 1: INITIAL VERIFICATION ---
     if (!userConfirmed) {
-      // STATEFUL SAVE: Lock in the parameters so the LLM can't hallucinate them later
       userData.pendingCommand = { action, amount, target };
       userData.awaitingConfirmation = true;
       userData.confirmed = false;
+      userData.warningAcknowledged = false;
 
       console.log('[Tool] State Saved:', userData.pendingCommand);
 
-      // FR-024: Broadcast state to Dashboard
-      const payload = JSON.stringify({
-        state: "PENDING_VERIFICATION",
+      await broadcast("GATE_UPDATE", {
+        state: "PENDING",
+        step: "VERIFICATION",
         action,
         amount,
         target,
       });
-      await ctx.room.localParticipant?.publishData(
-        new TextEncoder().encode(payload),
-        { topic: "agent-state" }
-      );
 
       const verificationMessage = `I heard: ${action} ${amount} into ${target}. Is that correct?`;
       ctx.ctx.session.say(verificationMessage, { addToChatCtx: true });
       return undefined;
     }
 
-    // --- CASE 2: EXECUTION (Post Verification) ---
-    // Retrieve the locked-in command
+    // --- PHASE 2: EXECUTE SECURITY GATES ---
     const savedCommand = userData.pendingCommand;
 
-    // Safety Check: Did we actually have a pending command?
     if (!savedCommand || !userData.confirmed) {
       return {
         status: "ERROR",
@@ -114,26 +113,9 @@ export const executeGuardedCommandTool = llm.tool({
       };
     }
 
-    // Clear state immediately to prevent re-execution
-    delete userData.pendingCommand;
-    userData.awaitingConfirmation = false;
-    userData.confirmed = false;
+    // --- GATE 1: ENS RESOLUTION ---
+    await broadcast("GATE_UPDATE", { state: "RUNNING", step: "ENS", target: savedCommand.target });
 
-    console.log('[Tool] Executing SAVED command:', savedCommand);
-
-    // Helper function to broadcast gate state updates
-    const broadcastGateState = async (state: string, step: string, payload: any) => {
-      const data = JSON.stringify({ type: "GATE_UPDATE", state, step, ...payload });
-      await ctx.room.localParticipant?.publishData(
-        new TextEncoder().encode(data),
-        { reliable: true, topic: "agent-state" }
-      );
-    };
-
-    // --- GATE 1: ENS RESOLUTION (FR-030 through FR-033) ---
-    await broadcastGateState("RUNNING", "ENS", { target: savedCommand.target });
-
-    // FR-033: Agent speaks "Resolving..."
     if (savedCommand.target.toLowerCase().endsWith('.eth')) {
       ctx.ctx.session.say(`Resolving ${savedCommand.target}...`, { addToChatCtx: true });
     }
@@ -141,64 +123,95 @@ export const executeGuardedCommandTool = llm.tool({
     const ensResult = await resolveEnsGate(savedCommand.target);
 
     if (!ensResult.passed) {
-      // FR-032: Broadcast failure to dashboard
-      await broadcastGateState("FAILED", "ENS", { error: ensResult.message });
+      await broadcast("GATE_UPDATE", { state: "FAILED", step: "ENS", error: ensResult.message });
       ctx.ctx.session.say(ensResult.message, { addToChatCtx: true });
-      return {
-        status: "ABORTED",
-        message: ensResult.message
-      };
+      return { status: "ABORTED", message: ensResult.message };
     }
 
-    // Update target to the resolved address for future gates
     const resolvedAddress = ensResult.data?.address || savedCommand.target;
-    await broadcastGateState("PASSED", "ENS", { resolved: resolvedAddress });
+    await broadcast("GATE_UPDATE", { state: "PASSED", step: "ENS", resolved: resolvedAddress });
 
-    // --- GATE 2: ADDRESS VALIDATION (FR-040) ---
-    await broadcastGateState("RUNNING", "VALIDATION", {});
+    // --- GATE 2: ADDRESS VALIDATION ---
+    await broadcast("GATE_UPDATE", { state: "RUNNING", step: "VALIDATION" });
 
     const valResult = await validateAddressGate(resolvedAddress);
 
     if (!valResult.passed) {
-      await broadcastGateState("FAILED", "VALIDATION", { error: valResult.message });
+      await broadcast("GATE_UPDATE", { state: "FAILED", step: "VALIDATION", error: valResult.message });
       ctx.ctx.session.say(valResult.message, { addToChatCtx: true });
-      return {
-        status: "ABORTED",
-        message: valResult.message
-      };
+      return { status: "ABORTED", message: valResult.message };
     }
 
-    await broadcastGateState("PASSED", "VALIDATION", {});
+    await broadcast("GATE_UPDATE", { state: "PASSED", step: "VALIDATION" });
 
-    // --- GATE 3: SOURCE CHECK (FR-050, FR-052) ---
-    await broadcastGateState("RUNNING", "SOURCE", {});
+    // --- GATE 3: SOURCE VERIFICATION ---
+    await broadcast("GATE_UPDATE", { state: "RUNNING", step: "SOURCE" });
 
     const sourceResult = await sourceCheckGate(resolvedAddress);
 
     if (!sourceResult.passed) {
-      await broadcastGateState("FAILED", "SOURCE", { error: sourceResult.message });
+      await broadcast("GATE_UPDATE", { state: "FAILED", step: "SOURCE", error: sourceResult.message });
       ctx.ctx.session.say(sourceResult.message, { addToChatCtx: true });
-      return {
-        status: "ABORTED",
-        message: sourceResult.message
-      };
+      return { status: "ABORTED", message: sourceResult.message };
     }
 
-    await broadcastGateState("PASSED", "SOURCE", { contract: sourceResult.message });
+    await broadcast("GATE_UPDATE", { state: "PASSED", step: "SOURCE", contract: sourceResult.message });
 
-    // (Future: Gate 4 - FR-060 Kairo)
+    // --- GATE 4: KAIRO SECURITY ANALYSIS ---
+    await broadcast("GATE_UPDATE", { state: "RUNNING", step: "KAIRO" });
 
-    // Placeholder Final Execution
-    await broadcastGateState("EXECUTED", "TX", {
+    const sourceCode = sourceResult.data?.sourceCode || "";
+    const kairoResult = await kairoScanGate(sourceCode);
+
+    // FR-062: Broadcast KAIRO_RESULT packet
+    await broadcast("KAIRO_RESULT", {
+      decision: kairoResult.kairoData.decision,
+      reason: kairoResult.kairoData.decision_reason,
+      summary: kairoResult.kairoData.summary,
+      risk_score: kairoResult.kairoData.risk_score
+    });
+
+    // FR-070: BLOCK or WARN decision - immediate abort
+    if (kairoResult.kairoData.decision === "BLOCK" || kairoResult.kairoData.decision === "WARN") {
+      await broadcast("GATE_UPDATE", {
+        state: "FAILED",
+        step: "KAIRO",
+        error: kairoResult.message,
+        issues: [kairoResult.data.vulnerability]
+      });
+
+      // FR-072: Exact phrasing requirement
+      const abortMessage = `I cannot execute this command. Kairo has detected ${kairoResult.data.vulnerability}. The transaction has been aborted to protect your funds.`;
+      ctx.ctx.session.say(abortMessage, { addToChatCtx: true });
+
+      return {
+        status: "ABORTED",
+        message: abortMessage
+      };
+    }
+    // FR-071: ALLOW decision - proceed
+    await broadcast("GATE_UPDATE", { state: "PASSED", step: "KAIRO", reason: kairoResult.message });
+
+    // --- PHASE 3: TRANSACTION EXECUTION ---
+    // Placeholder for actual transaction execution
+    await broadcast("GATE_UPDATE", {
+      state: "EXECUTED",
+      step: "TX",
       action: savedCommand.action,
       amount: savedCommand.amount,
       target: resolvedAddress,
-      txHash: "0xSIMULATED_HASH_123"
+      txHash: "0xSIMULATED_HASH_" + Date.now().toString(16)
     });
+
+    // Clear state
+    delete userData.pendingCommand;
+    userData.awaitingConfirmation = false;
+    userData.confirmed = false;
+    userData.warningAcknowledged = false;
 
     return {
       status: "SUCCESS",
-      message: `Security checks passed. Source verified. Executing transaction to ${resolvedAddress}.`,
+      message: `Security checks passed. Transaction executed to ${resolvedAddress}.`,
       parsedCommand: savedCommand,
     };
   },

@@ -12,7 +12,7 @@ export default defineAgent({
   entry: async (ctx: JobContext) => {
     await ctx.connect();
 
-    const userData: SessionState = { awaitingConfirmation: false, confirmed: false };
+    const userData: SessionState = { awaitingConfirmation: false, confirmed: false, warningAcknowledged: false };
     ctx.userData = userData;
 
     const participant = await ctx.waitForParticipant();

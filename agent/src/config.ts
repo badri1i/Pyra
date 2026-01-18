@@ -16,6 +16,8 @@ const envSchema = z.object({
   AGENT_PRIVATE_KEY: z.string().startsWith('0x', "Private key must start with 0x").length(66, "Must be 64 hex chars + 0x prefix").optional(),
   SIMULATE_TRANSACTIONS: z.coerce.boolean().default(true),
   ETHERSCAN_API_KEY: z.string().optional(),
+  KAIRO_API_KEY: z.string().optional(),
+  KAIRO_API_URL: z.string().url().optional(),
 });
 
 export const config = envSchema.parse(process.env);
