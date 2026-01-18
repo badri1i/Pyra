@@ -1,13 +1,14 @@
 import { config } from '../config.js';
 
 // FR-061: Strict Types
-export type KairoDecision = "ALLOW" | "WARN" | "BLOCK";
+export type KairoDecision = "ALLOW" | "WARN" | "BLOCK" | "OFFLINE";
 
 export interface KairoResponse {
   decision: KairoDecision;
   decision_reason: string;
   summary: string;
   risk_score: number;
+  isOffline?: boolean;
 }
 
 export async function analyzeWithKairo(sourceCode: string): Promise<KairoResponse> {
@@ -50,8 +51,14 @@ export async function analyzeWithKairo(sourceCode: string): Promise<KairoRespons
       risk_score: data.risk_score
     };
   } catch (error) {
-    console.error('[Kairo] API Error, falling back to simulation:', error);
-    return simulateKairoAnalysis(sourceCode);
+    console.error('[Kairo] API Error - Kairo is offline:', error);
+    return {
+      decision: "OFFLINE",
+      decision_reason: "Kairo security service is currently unavailable",
+      summary: "Unable to connect to Kairo API",
+      risk_score: 0,
+      isOffline: true
+    };
   }
 }
 

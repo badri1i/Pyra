@@ -97,6 +97,15 @@ function Node({ label, data, isFirst, isLast }: { label: string, data?: { status
       connectorStyle = 'dashed'; // Visual "Severed" look
   }
 
+  // Handle OFFLINE status (Kairo unavailable)
+  if (data?.status === "OFFLINE") {
+      color = '#9b59b6'; // Purple for offline
+      icon = '⊘';
+      connectorColor = '#9b59b6';
+      connectorStyle = 'dashed';
+      statusText = "OFFLINE";
+  }
+
   return (
     <div style={styles.nodeRow}>
       {/* FR-092: Connector Line */}

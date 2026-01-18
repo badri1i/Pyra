@@ -187,6 +187,28 @@ export const executeGuardedCommandTool = llm.tool({
         risk_score: kairoResult.kairoData.risk_score
       });
 
+      // Handle Kairo OFFLINE status
+      if (kairoResult.kairoData.decision === "OFFLINE" || kairoResult.kairoData.isOffline) {
+        await broadcast("GATE_UPDATE", {
+          state: "OFFLINE",
+          step: "KAIRO",
+          error: "Kairo is offline"
+        });
+
+        const offlineMessage = "Kairo security service is currently offline. I cannot verify the safety of this contract. Please try again later.";
+        ctx.ctx.session.say(offlineMessage, { addToChatCtx: true });
+
+        // Clear state
+        delete userData.pendingCommand;
+        userData.awaitingConfirmation = false;
+        userData.confirmed = false;
+
+        return {
+          status: "ABORTED",
+          message: offlineMessage
+        };
+      }
+
       // FR-070: BLOCK or WARN decision - immediate abort
       if (kairoResult.kairoData.decision === "BLOCK" || kairoResult.kairoData.decision === "WARN") {
         await broadcast("GATE_UPDATE", {

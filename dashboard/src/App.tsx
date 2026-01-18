@@ -5,11 +5,11 @@ import {
   BarVisualizer,
   ControlBar,
   useTracks,
+  useConnectionState,
 } from '@livekit/components-react';
-import { Track } from 'livekit-client';
+import { Track, ConnectionState } from 'livekit-client';
 import { useState } from 'react';
 import { CommandVisualizer } from './components/CommandVisualizer';
-import { TranscriptOverlay } from './components/TranscriptOverlay';
 
 const serverUrl = import.meta.env.VITE_LIVEKIT_URL;
 const token = import.meta.env.VITE_LIVEKIT_TOKEN;
@@ -25,6 +25,7 @@ export default function App() {
     <div style={styles.appContainer}>
       {!connected ? (
         <div style={styles.connectScreen}>
+          <div style={styles.logoOrb} />
           <h1 style={styles.title}>PYRA</h1>
           <p style={styles.subtitle}>Fiduciary Voice Guardian</p>
           <button
@@ -43,47 +44,73 @@ export default function App() {
           data-lk-theme="default"
           style={styles.roomContainer}
         >
-          {/* 1. THE BRAIN: Kairo Security Gates (Top Center) */}
-          <div style={styles.brainLayer}>
-            <CommandVisualizer />
-          </div>
-
-          {/* 2. THE VOICE: Audio Visualization (Center) */}
-          <div style={styles.voiceLayer}>
-            <GlowingVisualizer />
-          </div>
-
-          {/* 3. THE EARS: Transcripts (Bottom) */}
-          <TranscriptOverlay />
-
-          <RoomAudioRenderer />
-
-          {/* Controls hidden or styled minimally at bottom */}
-          <div style={{position: 'absolute', bottom: 20, opacity: 0.8}}>
-             <ControlBar controls={{ microphone: true, speaker: true, camera: false, screenShare: false, leave: true }} />
-          </div>
+          <RoomContent />
         </LiveKitRoom>
       )}
     </div>
   );
 }
 
-function GlowingVisualizer() {
-  const tracks = useTracks([Track.Source.Microphone, Track.Source.Unknown]);
+function RoomContent() {
+  const connectionState = useConnectionState();
+  const tracks = useTracks([Track.Source.Microphone]);
+
+  if (connectionState === ConnectionState.Connecting) {
+    return (
+      <div style={styles.loadingScreen}>
+        <div style={styles.spinner} />
+        <p>Connecting to PYRA...</p>
+      </div>
+    );
+  }
 
   return (
-    <div style={styles.visualizerWrapper}>
-      {/* We render a visualizer for the agent (usually the second track or specific source) */}
-      <div style={styles.orbGlow} />
-      {tracks.length > 0 && (
-        <BarVisualizer
-          state={tracks[0]}
-          barCount={20}
-          trackRef={tracks[0]}
-          style={{ height: '150px', width: '300px' }}
+    <>
+      {/* Security Gates (Top) */}
+      <div style={styles.brainLayer}>
+        <CommandVisualizer />
+      </div>
+
+      {/* Voice Orb (Center) */}
+      <div style={styles.voiceLayer}>
+        <div style={styles.orbContainer}>
+          <div style={styles.glowRing} />
+          <div style={styles.innerOrb}>
+            {tracks.length > 0 ? (
+              <BarVisualizer
+                barCount={5}
+                trackRef={tracks[0]}
+                style={{ height: '60px', width: '80px' }}
+              />
+            ) : (
+              <span style={{ fontSize: '2rem', opacity: 0.5 }}>🎙️</span>
+            )}
+          </div>
+        </div>
+      </div>
+
+      {/* Status */}
+      <div style={styles.statusLayer}>
+        <div style={styles.statusBadge}>
+          <span style={styles.statusDot} />
+          {connectionState === ConnectionState.Connected ? 'Connected' : connectionState}
+        </div>
+      </div>
+
+      <RoomAudioRenderer />
+
+      {/* Controls */}
+      <div style={styles.controlsLayer}>
+        <ControlBar
+          controls={{
+            microphone: true,
+            camera: false,
+            screenShare: false,
+            leave: true
+          }}
         />
-      )}
-    </div>
+      </div>
+    </>
   );
 }
 
@@ -91,75 +118,144 @@ const styles: Record<string, React.CSSProperties> = {
   appContainer: {
     height: '100vh',
     width: '100vw',
-    background: 'radial-gradient(circle at center, #1a1a1a 0%, #000 100%)',
+    background: 'radial-gradient(ellipse at center, #1a1a2e 0%, #0a0a0f 100%)',
     color: '#fff',
-    fontFamily: '"Inter", system-ui, sans-serif',
-    overflow: 'hidden'
+    fontFamily: 'system-ui, sans-serif',
+    overflow: 'hidden',
   },
   connectScreen: {
     display: 'flex',
     flexDirection: 'column',
     alignItems: 'center',
     justifyContent: 'center',
-    height: '100%'
+    height: '100%',
+    position: 'relative',
+  },
+  logoOrb: {
+    position: 'absolute',
+    width: '200px',
+    height: '200px',
+    borderRadius: '50%',
+    background: 'radial-gradient(circle, rgba(52, 152, 219, 0.2) 0%, transparent 70%)',
+    animation: 'pulseGlow 3s infinite ease-in-out',
   },
   title: {
     fontSize: '4rem',
     margin: 0,
     letterSpacing: '-2px',
-    background: 'linear-gradient(to right, #fff, #666)',
-    WebkitBackgroundClip: 'text',
-    color: 'transparent'
+    fontWeight: 700,
+    color: '#fff',
+    zIndex: 1,
   },
-  subtitle: { fontSize: '1.2rem', color: '#666', marginTop: '10px' },
+  subtitle: {
+    fontSize: '1rem',
+    color: '#666',
+    marginTop: '10px',
+    letterSpacing: '2px',
+    textTransform: 'uppercase',
+  },
   connectButton: {
     marginTop: '40px',
     padding: '15px 40px',
-    fontSize: '1.2rem',
+    fontSize: '1rem',
     borderRadius: '50px',
     border: 'none',
     background: '#fff',
     color: '#000',
-    fontWeight: 'bold',
+    fontWeight: 600,
     cursor: 'pointer',
-    boxShadow: '0 0 20px rgba(255,255,255,0.2)',
-    transition: 'transform 0.2s'
+    zIndex: 1,
+  },
+  loadingScreen: {
+    display: 'flex',
+    flexDirection: 'column',
+    alignItems: 'center',
+    justifyContent: 'center',
+    height: '100%',
+    color: '#888',
+  },
+  spinner: {
+    width: '40px',
+    height: '40px',
+    border: '3px solid #333',
+    borderTopColor: '#3498db',
+    borderRadius: '50%',
+    animation: 'spin 1s linear infinite',
+    marginBottom: '20px',
   },
   roomContainer: {
     height: '100%',
     width: '100%',
     position: 'relative',
     display: 'flex',
+    flexDirection: 'column',
+    alignItems: 'center',
     justifyContent: 'center',
-    alignItems: 'center'
   },
   brainLayer: {
     position: 'absolute',
-    top: '40px',
+    top: '30px',
     zIndex: 10,
-    // Ensure the visualizer floats elegantly
-    filter: 'drop-shadow(0 10px 20px rgba(0,0,0,0.5))'
   },
   voiceLayer: {
     zIndex: 1,
-    display: 'flex',
-    justifyContent: 'center',
-    alignItems: 'center',
-    transform: 'scale(1.5)' // Make the visualizer bigger
+    marginTop: '100px',
   },
-  visualizerWrapper: {
+  statusLayer: {
+    position: 'absolute',
+    bottom: '100px',
+    zIndex: 10,
+  },
+  controlsLayer: {
+    position: 'absolute',
+    bottom: '30px',
+    zIndex: 10,
+  },
+  orbContainer: {
     position: 'relative',
+    width: '180px',
+    height: '180px',
     display: 'flex',
+    alignItems: 'center',
     justifyContent: 'center',
-    alignItems: 'center'
   },
-  orbGlow: {
+  glowRing: {
     position: 'absolute',
     width: '200px',
     height: '200px',
-    background: 'radial-gradient(circle, rgba(52, 152, 219, 0.2) 0%, rgba(0,0,0,0) 70%)',
     borderRadius: '50%',
-    zIndex: -1,
-    animation: 'pulseGlow 3s infinite ease-in-out'
-  }
+    background: 'radial-gradient(circle, rgba(52, 152, 219, 0.3) 0%, transparent 70%)',
+    animation: 'pulseGlow 3s infinite ease-in-out',
+  },
+  innerOrb: {
+    width: '120px',
+    height: '120px',
+    borderRadius: '50%',
+    background: 'linear-gradient(135deg, #1a1a2e 0%, #0a0a15 100%)',
+    border: '2px solid #3498db',
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    boxShadow: '0 0 40px rgba(52, 152, 219, 0.3)',
+  },
+  statusBadge: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: '10px',
+    padding: '10px 20px',
+    borderRadius: '30px',
+    border: '1px solid #3498db',
+    background: 'rgba(0,0,0,0.5)',
+    color: '#3498db',
+    fontSize: '0.9rem',
+    textTransform: 'uppercase',
+    letterSpacing: '1px',
+  },
+  statusDot: {
+    width: '8px',
+    height: '8px',
+    borderRadius: '50%',
+    backgroundColor: '#2ecc71',
+    boxShadow: '0 0 10px #2ecc71',
+  },
 };
