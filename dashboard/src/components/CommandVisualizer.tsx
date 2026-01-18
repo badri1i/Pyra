@@ -82,7 +82,7 @@ function StepRow({ label, data, isAnimated }: { label: string, data?: { status: 
     }
   }
 
-  if (data.status === "PASSED" || data.status === "EXECUTED") {
+  if (data.status === "PASSED" || data.status === "EXECUTED" || data.status === "SUCCESS") {
     color = '#2ecc71';
     icon = '✅';
   }

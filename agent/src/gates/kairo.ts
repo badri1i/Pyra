@@ -1,5 +1,6 @@
-import { analyzeWithKairo, KairoResponse } from '../services/kairo.js';
-import { GateResult } from './ens.js';
+import { analyzeWithKairo } from '../services/kairo.js';
+import type { KairoResponse } from '../services/kairo.js';
+import type { GateResult } from './ens.js';
 
 /**
  * FR-060/061: Kairo Security Gate (Gate 4)

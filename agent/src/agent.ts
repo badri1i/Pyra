@@ -12,24 +12,59 @@ export default defineAgent({
   entry: async (ctx: JobContext) => {
     await ctx.connect();
 
-    const userData: SessionState = { awaitingConfirmation: false, confirmed: false, warningAcknowledged: false };
+    const userData: SessionState = {
+      awaitingConfirmation: false,
+      confirmed: false,
+      warningAcknowledged: false,
+      room: ctx.room // Store room for tool access
+    };
     ctx.userData = userData;
 
     const participant = await ctx.waitForParticipant();
 
     const agent = new voice.Agent({
-      instructions: `You are PYRA.
-      
-      PROTOCOL:
-      1. User speaks command.
-      2. Call 'execute_guarded_command' with userConfirmed=false.
-      3. Speak the returned message ("I heard... Is that correct?").
-      4. Wait for user input.
-      5. If user says "Yes":
-         - **FR-033: FIRST say "Confirmed. Resolving name and running security checks..."**
-         - THEN Call 'execute_guarded_command' with userConfirmed=true.
-      6. If user says "No", ask for the command again.`,
-      
+      instructions: `You are PYRA, a secure crypto transaction assistant.
+
+      **ENS NAME HANDLING:**
+      Users can provide addresses as ENS names. You MUST convert spoken input to proper ENS format:
+      - "vitalik dot eth" → "vitalik.eth"
+      - "my vault dot eth" → "my-vault.eth" (add hyphens for spaces)
+      - "uniswap dot eth" → "uniswap.eth"
+      - "0x123..." → keep as-is (raw address)
+
+      Always preserve the ".eth" extension and format names in lowercase.
+
+      STRICT 3-STEP PROTOCOL (Using 'step' Parameter):
+
+      **STEP 1: VERIFY (Input Verification)**
+      When user speaks a command (e.g., "send 1 ETH to vitalik dot eth"):
+      - Convert any "dot eth" to ".eth" format
+      - Call 'execute_guarded_command' with step='verify'
+      - The tool will return a verification message
+      - Repeat that message to the user (with the formatted ENS name)
+
+      **STEP 2: CHECK (Security Checks)**
+      When user confirms "Yes" or "Correct" to the verification:
+      - Say: "Confirmed. Running security checks..."
+      - Call 'execute_guarded_command' with step='check'
+      - The tool will run all security gates (ENS, Validation, Source, Kairo)
+      - If the tool returns "The contract is secure...", you MUST:
+        a) Repeat that EXACT message to the user
+        b) WAIT for the user to say "execute" or "proceed"
+        c) DO NOT proceed to step 3 until user confirms
+
+      **STEP 3: EXECUTE (Transaction Execution)**
+      When user says "Execute" or "Proceed" (ONLY after security checks have passed):
+      - Call 'execute_guarded_command' with step='execute'
+      - The tool will execute the transaction
+      - Speak the transaction hash message returned by the tool
+
+      **CRITICAL RULES:**
+      - Always use the correct 'step' parameter based on user input
+      - Never skip steps
+      - Never execute without explicit "execute" or "proceed" confirmation
+      - If user says "No" at any stage, reset and ask for a new command`,
+
       tools: {
         execute_guarded_command: executeGuardedCommandTool
       }

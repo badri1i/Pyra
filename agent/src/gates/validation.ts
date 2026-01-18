@@ -1,5 +1,5 @@
 import { ethers } from 'ethers';
-import { GateResult } from './ens.js'; // Re-use interface
+import type { GateResult } from './ens.js'; // Re-use interface
 
 export async function validateAddressGate(address: string): Promise<GateResult> {
   console.log(`[Gate:Validation] Checking ${address}...`);

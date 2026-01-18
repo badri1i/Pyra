@@ -1,5 +1,5 @@
 import { fetchContractSource } from '../services/etherscan.js';
-import { GateResult } from './ens.js';
+import type { GateResult } from './ens.js';
 
 export async function sourceCheckGate(address: string): Promise<GateResult> {
   console.log(`[Gate:Source] Fetching source for ${address}...`);
