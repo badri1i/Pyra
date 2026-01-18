@@ -1,6 +1,8 @@
 import { llm } from '@livekit/agents';
 import { z } from 'zod';
 import { resolveEnsGate } from '../gates/ens.js';
+import { validateAddressGate } from '../gates/validation.js';
+import { sourceCheckGate } from '../gates/source.js';
 
 /**
  * FR-011: Command Intent Parsing
@@ -121,7 +123,7 @@ export const executeGuardedCommandTool = llm.tool({
 
     // Helper function to broadcast gate state updates
     const broadcastGateState = async (state: string, step: string, payload: any) => {
-      const data = JSON.stringify({ state, step, ...payload });
+      const data = JSON.stringify({ type: "GATE_UPDATE", state, step, ...payload });
       await ctx.room.localParticipant?.publishData(
         new TextEncoder().encode(data),
         { reliable: true, topic: "agent-state" }
@@ -152,7 +154,39 @@ export const executeGuardedCommandTool = llm.tool({
     const resolvedAddress = ensResult.data?.address || savedCommand.target;
     await broadcastGateState("PASSED", "ENS", { resolved: resolvedAddress });
 
-    // (Future gates: FR-040 Validation, FR-050 Source Check, FR-060 Kairo)
+    // --- GATE 2: ADDRESS VALIDATION (FR-040) ---
+    await broadcastGateState("RUNNING", "VALIDATION", {});
+
+    const valResult = await validateAddressGate(resolvedAddress);
+
+    if (!valResult.passed) {
+      await broadcastGateState("FAILED", "VALIDATION", { error: valResult.message });
+      ctx.ctx.session.say(valResult.message, { addToChatCtx: true });
+      return {
+        status: "ABORTED",
+        message: valResult.message
+      };
+    }
+
+    await broadcastGateState("PASSED", "VALIDATION", {});
+
+    // --- GATE 3: SOURCE CHECK (FR-050, FR-052) ---
+    await broadcastGateState("RUNNING", "SOURCE", {});
+
+    const sourceResult = await sourceCheckGate(resolvedAddress);
+
+    if (!sourceResult.passed) {
+      await broadcastGateState("FAILED", "SOURCE", { error: sourceResult.message });
+      ctx.ctx.session.say(sourceResult.message, { addToChatCtx: true });
+      return {
+        status: "ABORTED",
+        message: sourceResult.message
+      };
+    }
+
+    await broadcastGateState("PASSED", "SOURCE", { contract: sourceResult.message });
+
+    // (Future: Gate 4 - FR-060 Kairo)
 
     // Placeholder Final Execution
     await broadcastGateState("EXECUTED", "TX", {
@@ -164,7 +198,7 @@ export const executeGuardedCommandTool = llm.tool({
 
     return {
       status: "SUCCESS",
-      message: `Security checks passed. Executing transaction to ${resolvedAddress}.`,
+      message: `Security checks passed. Source verified. Executing transaction to ${resolvedAddress}.`,
       parsedCommand: savedCommand,
     };
   },

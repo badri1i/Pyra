@@ -14,8 +14,8 @@ export function CommandVisualizer() {
         setSteps({ VERIFICATION: { status: "WAITING" } });
         setState(payload);
       } else {
-        // Capture specific details (like resolved address) if present
-        const detail = payload.resolved || payload.hash || payload.error;
+        // Capture specific details (like resolved address, contract name, etc.) if present
+        const detail = payload.resolved || payload.hash || payload.error || payload.contract;
 
         setSteps(prev => ({
           ...prev,
@@ -40,6 +40,8 @@ export function CommandVisualizer() {
       <div style={styles.stepsContainer}>
         <StepRow label="Voice Verification" data={steps.VERIFICATION || { status: "PENDING" }} />
         {steps.ENS && <StepRow label="ENS Resolution" data={steps.ENS} />}
+        {steps.VALIDATION && <StepRow label="Validating Address" data={steps.VALIDATION} />}
+        {steps.SOURCE && <StepRow label="Verified Source" data={steps.SOURCE} />}
         {steps.TX && <StepRow label="Transaction" data={steps.TX} />}
       </div>
     </div>
