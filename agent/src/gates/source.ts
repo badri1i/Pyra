@@ -11,7 +11,7 @@ export async function sourceCheckGate(address: string): Promise<GateResult> {
   if (!source.verified) {
     return {
       passed: false,
-      message: "I cannot execute this command. This contract's source code is not verified."
+      message: "I cannot execute this command. Contract source is unavailable or unverified."
     };
   }
 

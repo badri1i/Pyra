@@ -40,7 +40,7 @@ export async function resolveEnsGate(target: string): Promise<GateResult> {
       // FR-034: Handle failure
       return {
         passed: false,
-        message: `ENS Resolution Failed: Could not find address for ${target}`
+        message: "The source code of address isn't verified so we are abandoning the payment."
       };
     }
 

@@ -5,6 +5,10 @@ import * as dotenv from 'dotenv';
 import { fileURLToPath } from 'url';
 import * as silero from '@livekit/agents-plugin-silero';
 import { executeGuardedCommandTool, type SessionState } from './tools/guarded-command.js';
+import { getBalanceTool } from './tools/balance.js';
+import { getWalletInfoTool } from './tools/wallet-info.js';
+import { getAgentWallet } from './services/wallet.js';
+import { config } from './config.js';
 import { runStartupHealthChecks } from './services/health.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -84,6 +88,29 @@ export default defineAgent({
     console.log('[Agent] Entry started');
     await ctx.connect();
     console.log('[Agent] Connected to room');
+    try {
+      const agentWallet = getAgentWallet();
+      const payload = JSON.stringify({
+        type: "WALLET_INFO",
+        address: agentWallet.address,
+        chainId: config.CHAIN_ID,
+      });
+      await ctx.room.localParticipant?.publishData(new TextEncoder().encode(payload), {
+        reliable: true,
+        topic: "agent-state",
+      });
+    } catch {
+      const payload = JSON.stringify({
+        type: "WALLET_INFO",
+        address: null,
+        chainId: config.CHAIN_ID,
+        error: "Agent wallet not initialized",
+      });
+      await ctx.room.localParticipant?.publishData(new TextEncoder().encode(payload), {
+        reliable: true,
+        topic: "agent-state",
+      });
+    }
     void runStartupHealthChecks();
 
     const userData: SessionState = {
@@ -147,10 +174,28 @@ export default defineAgent({
       - Always use the correct 'step' parameter based on user input
       - Never skip steps
       - Never execute without explicit "execute" or "proceed" confirmation
-      - If user says "No" at any stage, reset and ask for a new command`,
+      - If user says "No" at any stage, reset and ask for a new command
+
+      **BALANCE LOOKUPS:**
+      - If the user asks for a wallet balance, call the 'get_balance' tool
+      - If no address is provided, ask for an address or say you can check the agent wallet if requested
+
+      **WALLET HELP:**
+      - If the user is confused about wallets or asks how to fund the agent wallet, call 'get_wallet_info'
+
+      **SPEECH CLARITY:**
+      - If the user gives a hard-to-hear address or amount, ask them to repeat slowly
+      - Encourage chunking: "please say the address in 4-character groups"
+      - For ENS, ask them to say "name dot eth" and repeat it back in lowercase
+      - Always confirm the parsed address/amount before proceeding
+      - Offer phonetic spelling for ambiguous letters (e.g., "A as Alpha, B as Bravo")
+      - Ask users to spell token symbols letter-by-letter (e.g., "U-S-D-C")
+      - Confirm amounts with units and digits (e.g., "one point five ETH")`,
 
       tools: {
-        execute_guarded_command: executeGuardedCommandTool
+        execute_guarded_command: executeGuardedCommandTool,
+        get_balance: getBalanceTool,
+        get_wallet_info: getWalletInfoTool
       }
     });
 

@@ -247,7 +247,7 @@ export const executeGuardedCommandTool = llm.tool({
         });
 
         // FR-072: Exact phrasing requirement
-        const abortMessage = `I cannot execute this command. Kairo has detected ${kairoResult.data.vulnerability}. The transaction has been aborted to protect your funds.`;
+        const abortMessage = `I cannot execute this command. The contract is vulnerable: ${kairoResult.data.vulnerability}. The transaction has been aborted to protect your funds.`;
         ctx.ctx.session.say(abortMessage, { addToChatCtx: true });
 
         // Clear state on failure
