@@ -1,7 +1,10 @@
-import { type JobContext, WorkerOptions, cli, defineAgent, voice } from '@livekit/agents';
+import { type JobContext, WorkerOptions, cli, defineAgent, llm, voice } from '@livekit/agents';
 import * as path from 'path';
 import * as dotenv from 'dotenv';
 import { fileURLToPath } from 'url';
+import { config } from './config.js'; // FR-004: Validation triggers here
+import { getAgentWallet, getBalance } from './services/wallet.js'; // FR-005/006: Init
+import { execute_guarded_command, guardedCommandTool } from './tools/guarded-command.js'; // FR-011/012/013: Command parsing
 
 // Load environment variables from .env
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -10,6 +13,19 @@ dotenv.config({ path: envPath });
 
 export default defineAgent({
   entry: async (ctx: JobContext) => {
+    // --- STARTUP CHECKS ---
+    console.log('[System] Verifying Wallet...');
+    try {
+        const wallet = getAgentWallet();
+        const balance = await getBalance(wallet.address);
+        console.log(`[System] Agent Wallet Active: ${wallet.address} (Balance: ${balance} ETH)`);
+        if (config.SIMULATE_TRANSACTIONS) {
+            console.log('[System] 🛡️ SIMULATION MODE ACTIVE. No real funds will move.');
+        }
+    } catch (e) {
+        console.error('[System] Wallet check failed:', e);
+    }
+
     // 1. Connect to LiveKit
     await ctx.connect();
     console.log('Waiting for participant...');
@@ -24,9 +40,17 @@ export default defineAgent({
 
 YOUR PRIME DIRECTIVE: Protect user capital at all costs.
 
+Wallet Address: ${getAgentWallet()?.address || "Unavailable"}
+
+## COMMAND PARSING (FR-011, FR-012, FR-013)
+When you hear a transaction request (deposit, swap, send, invest):
+1. Immediately call the execute_guarded_command tool with userConfirmed=false
+2. The tool will parse the action, amount, and target (converting "dot eth" to ".eth")
+3. You will receive back the parsed command
+
 ## VERIFICATION LOOP (CRITICAL)
 Before running any security scan, you MUST verify the command:
-1. Parse the user's command
+1. Parse the user's command using execute_guarded_command
 2. Say: "I heard: [action] [amount] into [target]. Is that correct?"
 3. Wait for confirmation ("yes", "correct", "that's right")
 4. Only THEN call execute_guarded_command with userConfirmed=true
@@ -44,6 +68,15 @@ When execute_guarded_command returns:
 - Abort: "I cannot execute this command. Kairo detected a critical re-entrancy vulnerability..."
 - Ready: "The contract is secure. I am ready to deposit 1 ETH. Say 'execute' to proceed."
 - Success: "Transaction submitted. Hash: 0x7a25..."`,
+
+      // FR-011/012/013: Register command parsing tool
+      tools: {
+        execute_guarded_command: llm.tool({
+          description: guardedCommandTool.description,
+          parameters: guardedCommandTool.parameters,
+          execute: execute_guarded_command,
+        }),
+      },
     });
 
     // 4. Start Session using LiveKit Inference
