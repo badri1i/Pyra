@@ -1,4 +1,5 @@
 import { type JobContext, type JobProcess, WorkerOptions, cli, defineAgent, voice } from '@livekit/agents';
+import * as fs from 'fs';
 import * as path from 'path';
 import * as dotenv from 'dotenv';
 import { fileURLToPath } from 'url';
@@ -9,12 +10,74 @@ import { runStartupHealthChecks } from './services/health.js';
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const envPath = path.join(__dirname, '../.env');
 dotenv.config({ path: envPath });
+const lockPath = path.join(process.cwd(), '.pyra-agent.lock');
+let lockAcquired = false;
+
+const isProcessRunning = (pid: number) => {
+  if (!Number.isFinite(pid) || pid <= 0) return false;
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+};
+
+const acquireAgentLock = () => {
+  if (lockAcquired) return true;
+
+  try {
+    const fd = fs.openSync(lockPath, 'wx');
+    fs.writeFileSync(fd, `${process.pid}`);
+    fs.closeSync(fd);
+    lockAcquired = true;
+    return true;
+  } catch (error) {
+    if (!(error instanceof Error) || !('code' in error) || (error as NodeJS.ErrnoException).code !== 'EEXIST') {
+      throw error;
+    }
+  }
+
+  try {
+    const existingPid = Number.parseInt(fs.readFileSync(lockPath, 'utf8').trim(), 10);
+    if (isProcessRunning(existingPid)) {
+      console.error(`[Agent] Another agent process is already running (pid ${existingPid}).`);
+      return false;
+    }
+    fs.unlinkSync(lockPath);
+  } catch {
+    return false;
+  }
+
+  return acquireAgentLock();
+};
+
+const releaseAgentLock = () => {
+  if (!lockAcquired) return;
+  try {
+    fs.unlinkSync(lockPath);
+  } catch {
+    // ignore
+  }
+  lockAcquired = false;
+};
+
+process.on('exit', releaseAgentLock);
+process.on('SIGINT', () => {
+  releaseAgentLock();
+  process.exit(0);
+});
+process.on('SIGTERM', () => {
+  releaseAgentLock();
+  process.exit(0);
+});
 
 export default defineAgent({
   prewarm: async (proc: JobProcess) => {
     proc.userData.vad = await silero.VAD.load();
   },
   entry: async (ctx: JobContext) => {
+    if (!acquireAgentLock()) return;
     console.log('[Agent] Entry started');
     await ctx.connect();
     console.log('[Agent] Connected to room');
