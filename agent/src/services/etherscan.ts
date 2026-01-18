@@ -9,6 +9,13 @@ export interface ContractSource {
 }
 
 export async function fetchContractSource(address: string): Promise<ContractSource> {
+  // --- FR-053 TEST TRIGGER ---
+  // If we target this specific fake address, force a verification failure
+  if (address === "0x0000000000000000000000000000000000000000") {
+    console.log("[Etherscan] Simulating Unverified Contract for FR-053");
+    return { verified: false, sourceCode: "", name: "Unverified Trap" };
+  }
+
   // Simulator Bypass
   if (!config.ETHERSCAN_API_KEY) {
     console.warn("[Etherscan] No API Key. Simulating verified contract.");
