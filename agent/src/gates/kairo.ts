@@ -22,8 +22,8 @@ export async function kairoScanGate(sourceCode: string): Promise<GateResult & { 
     };
   }
 
-  // FR-071: WARN - Requires user acknowledgement
-  if (kairoResponse.decision === "WARN") {
+  // FR-071: WARN/ESCALATE - Requires user acknowledgement
+  if (kairoResponse.decision === "WARN" || kairoResponse.decision === "ESCALATE") {
     return {
       passed: false, // Don't proceed without user acknowledgement
       message: `Kairo Security: WARNING - ${kairoResponse.summary}. Risk Score: ${kairoResponse.risk_score}/10. ${kairoResponse.decision_reason}. Do you want to proceed anyway?`,

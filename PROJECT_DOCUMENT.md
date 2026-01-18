@@ -196,7 +196,7 @@ _Pattern: {Actor} + shall + {action} + {condition/purpose}_ _Ordered by workflow
 |ID|Requirement|
 |---|---|
 |FR-060|The system shall submit source code to Kairo API (`POST /v1/analyze`).|
-|FR-061|The system shall parse Kairo's response (ALLOW/WARN/BLOCK).|
+|FR-061|The system shall parse Kairo's response (ALLOW/WARN/BLOCK/ESCALATE).|
 |FR-062|The system shall broadcast a "KAIRO_RESULT" data packet to the dashboard.|
 |FR-063|The dashboard shall animate the Kairo node turning GREEN (safe) or RED (unsafe).|
 |FR-064|The dashboard shall display vulnerability details when issues are found.|
@@ -205,10 +205,11 @@ _Pattern: {Actor} + shall + {action} + {condition/purpose}_ _Ordered by workflow
 
 |ID|Requirement|
 |---|---|
-|FR-070|The agent shall **ABORT** the command when Kairo returns WARN or BLOCK.|
-|FR-071|The agent shall **PROCEED** to execution confirmation when Kairo returns ALLOW.|
-|FR-072|When aborting, the agent shall speak: "I cannot execute this command. Kairo has detected [vulnerability]. The transaction has been aborted to protect your funds."|
-|FR-073|When proceeding, the agent shall speak: "The contract is secure. I am ready to [action] [amount]. Please confirm by saying 'execute' or 'proceed'."|
+|FR-070|The agent shall **ABORT** the command when Kairo returns BLOCK.|
+|FR-071|The agent shall require explicit user acknowledgment when Kairo returns WARN or ESCALATE.|
+|FR-072|The agent shall **PROCEED** to execution confirmation when Kairo returns ALLOW.|
+|FR-073|When aborting, the agent shall speak: "I cannot execute this command. Kairo has detected [vulnerability]. The transaction has been aborted to protect your funds."|
+|FR-074|When proceeding, the agent shall speak: "The contract is secure. I am ready to [action] [amount]. Please confirm by saying 'execute' or 'proceed'."|
 
 ## 2.9 Transaction Execution (ethers.js Wallet) ⭐ NEW
 
@@ -625,7 +626,7 @@ const executeGuardedCommandTool = {
     const kairo = await analyzeWithKairo(source.code);
     broadcastKairoResult(ctx, kairo);
 
-    if (kairo.decision === "BLOCK" || kairo.decision === "WARN") {
+    if (kairo.decision === "BLOCK" || kairo.decision === "WARN" || kairo.decision === "ESCALATE") {
       broadcastGateUpdate(ctx, "kairo", "failed", kairo.decision_reason);
       broadcastCommandAborted(ctx, action, amount, target);
       return {
@@ -689,6 +690,8 @@ OPENAI_API_KEY=<for GPT-4o-mini>
 
 # Security Services
 KAIRO_API_KEY=kairo_sk_live_xxxxx
+KAIRO_API_URL=https://api.kairoaisec.com/v1/analyze
+KAIRO_SEVERITY_THRESHOLD=high
 ETHERSCAN_API_KEY=xxxxx
 
 # Ethereum (Sepolia)

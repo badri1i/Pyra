@@ -1,7 +1,7 @@
 import { config } from '../config.js';
 
 // FR-061: Strict Types
-export type KairoDecision = "ALLOW" | "WARN" | "BLOCK" | "OFFLINE";
+export type KairoDecision = "ALLOW" | "WARN" | "BLOCK" | "ESCALATE" | "OFFLINE";
 
 export interface KairoResponse {
   decision: KairoDecision;
@@ -11,19 +11,52 @@ export interface KairoResponse {
   isOffline?: boolean;
 }
 
+type KairoSummary = {
+  total?: number;
+  critical?: number;
+  high?: number;
+  medium?: number;
+  low?: number;
+};
+
+function formatSummary(summary: unknown): string {
+  if (!summary) {
+    return '';
+  }
+  if (typeof summary === 'string') {
+    return summary;
+  }
+  if (typeof summary === 'object') {
+    const { total, critical, high, medium, low } = summary as KairoSummary;
+    const parts = [
+      total != null ? `total=${total}` : undefined,
+      critical != null ? `critical=${critical}` : undefined,
+      high != null ? `high=${high}` : undefined,
+      medium != null ? `medium=${medium}` : undefined,
+      low != null ? `low=${low}` : undefined,
+    ].filter(Boolean);
+    if (parts.length > 0) {
+      return `Findings: ${parts.join(', ')}`;
+    }
+  }
+  return '';
+}
+
 export async function analyzeWithKairo(sourceCode: string): Promise<KairoResponse> {
-  console.log('[Kairo] Analyzing contract source code...');
+  console.log('[Kairo] Security layer engaged. Preparing contract analysis...');
 
   // FR-060: Real API Client Structure
-  const kairoEndpoint = config.KAIRO_API_URL || "https://api.kairo.security/analyze";
+  const kairoEndpoint = config.KAIRO_API_URL || "https://api.kairoaisec.com/v1/analyze";
   const apiKey = config.KAIRO_API_KEY;
+  console.log(`[Kairo] Targeting API endpoint: ${kairoEndpoint} (api key ${apiKey ? "set" : "missing"})`);
 
   // For Hackathon: Simulate with keyword detection, but structure is production-ready
   if (!apiKey) {
-    console.warn('[Kairo] No API Key. Running simulated vulnerability detection.');
+    console.warn('[Kairo] No API Key. Running simulated vulnerability detection instead of live Kairo scan.');
     return simulateKairoAnalysis(sourceCode);
   }
 
+  const start = Date.now();
   try {
     // FR-060: Production HTTP POST structure
     const response = await fetch(kairoEndpoint, {
@@ -33,9 +66,17 @@ export async function analyzeWithKairo(sourceCode: string): Promise<KairoRespons
         'Authorization': `Bearer ${apiKey}`
       },
       body: JSON.stringify({
-        source_code: sourceCode,
-        chain: 'ethereum',
-        scan_type: 'full'
+        source: {
+          type: 'inline',
+          files: [{
+            path: 'Contract.sol',
+            content: sourceCode
+          }]
+        },
+        config: {
+          severity_threshold: config.KAIRO_SEVERITY_THRESHOLD ?? 'high',
+          include_suggestions: true
+        }
       })
     });
 
@@ -44,14 +85,16 @@ export async function analyzeWithKairo(sourceCode: string): Promise<KairoRespons
     }
 
     const data = await response.json();
+    console.log(`[Kairo] API responded in ${Date.now() - start}ms with decision ${data.decision}`);
+    const summary = formatSummary(data.summary) || data.decision_reason || 'Kairo analysis completed';
     return {
       decision: data.decision as KairoDecision,
       decision_reason: data.decision_reason,
-      summary: data.summary,
-      risk_score: data.risk_score
+      summary,
+      risk_score: data.risk_score ?? 0
     };
   } catch (error) {
-    console.error('[Kairo] API Error - Kairo is offline:', error);
+    console.error(`[Kairo] API Error after ${Date.now() - start}ms - Kairo is offline:`, error);
     return {
       decision: "OFFLINE",
       decision_reason: "Kairo security service is currently unavailable",

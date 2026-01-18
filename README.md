@@ -21,7 +21,8 @@ CHAIN_ID=11155111
 
 ETHERSCAN_API_KEY=your-etherscan-key
 KAIRO_API_KEY=your-kairo-key
-KAIRO_API_URL=https://api.kairo.security/analyze
+KAIRO_API_URL=https://api.kairoaisec.com/v1/analyze
+KAIRO_SEVERITY_THRESHOLD=high
 
 AGENT_PRIVATE_KEY=0x...
 SIMULATE_TRANSACTIONS=true
@@ -44,9 +45,11 @@ VITE_LIVEKIT_TOKEN=<paste-generated-token>
 ## Run
 
 ```bash
-# Terminal 1
+# Terminal 1 (connect agent to the dev room)
 cd agent
 npm run dev
+
+This connects the agent to the `pyra-room` used by the dashboard token generator.
 
 # Terminal 2
 cd dashboard

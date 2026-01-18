@@ -3,8 +3,10 @@ import type { GateResult } from './ens.js';
 
 export async function sourceCheckGate(address: string): Promise<GateResult> {
   console.log(`[Gate:Source] Fetching source for ${address}...`);
+  const start = Date.now();
 
   const source = await fetchContractSource(address);
+  console.log(`[Gate:Source] Source fetch completed in ${Date.now() - start}ms`);
 
   if (!source.verified) {
     return {

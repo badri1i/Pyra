@@ -1,46 +1,72 @@
-import { useDataChannel } from "@livekit/components-react";
+import { useConnectionState, useDataChannel } from "@livekit/components-react";
+import { ConnectionState } from "livekit-client";
 import { useState } from "react";
 
 export function CommandVisualizer() {
   const [state, setState] = useState<any>({});
   const [steps, setSteps] = useState<Record<string, { status: string, detail?: string, issues?: string[] }>>({});
   const [globalStatus, setGlobalStatus] = useState<"IDLE" | "PENDING" | "EXECUTED" | "ABORTED">("IDLE");
+  const connectionState = useConnectionState();
 
-  useDataChannel((msg) => {
-    if (msg.topic === "agent-state") {
-      const payload = JSON.parse(new TextDecoder().decode(msg.payload));
+  useDataChannel("agent-state", (msg) => {
+    const payload = JSON.parse(new TextDecoder().decode(msg.payload));
 
-      if (payload.type === "GATE_UPDATE") {
-        if (payload.state === "PENDING") {
-            setSteps({ VERIFICATION: { status: "WAITING" } });
-            setState(payload);
-            setGlobalStatus("PENDING");
+    if (payload.type === "GATE_UPDATE") {
+      if (payload.state === "PENDING") {
+        setSteps({ VERIFICATION: { status: "WAITING" } });
+        setState(payload);
+        setGlobalStatus("PENDING");
+      } else {
+        const detail = payload.resolved || payload.hash || payload.error || payload.reason || payload.contract;
+
+        setState((prev: any) => ({
+          ...prev,
+          action: payload.action ?? prev.action,
+          amount: payload.amount ?? prev.amount,
+          target: payload.target ?? prev.target,
+        }));
+
+        // Track Global Status based on Gate results
+        if (payload.state === "FAILED") {
+          setGlobalStatus("ABORTED");
+        } else if (payload.state === "SUCCESS") {
+          setGlobalStatus("EXECUTED");
         } else {
-            const detail = payload.resolved || payload.hash || payload.error || payload.reason || payload.contract;
-
-            // Track Global Status based on Gate results
-            if (payload.state === "FAILED") setGlobalStatus("ABORTED");
-            if (payload.state === "SUCCESS") setGlobalStatus("EXECUTED");
-
-            setSteps(prev => ({ ...prev, [payload.step]: { status: payload.state, detail, issues: payload.issues } }));
+          setGlobalStatus((prev) => (prev === "IDLE" ? "PENDING" : prev));
         }
+
+        setSteps(prev => ({ ...prev, [payload.step]: { status: payload.state, detail, issues: payload.issues } }));
       }
     }
   });
 
-  if (globalStatus === "IDLE") return <div style={styles.placeholder}>System Ready. Waiting for Command...</div>;
+  const isIdle = globalStatus === "IDLE";
+  const placeholderText =
+    connectionState === ConnectionState.Connected
+      ? "Session live. Say a command to begin."
+      : "Connect to start session...";
 
   return (
     <div style={{
         ...styles.card,
-        borderColor: globalStatus === "ABORTED" ? '#e74c3c' : globalStatus === "EXECUTED" ? '#2ecc71' : '#333'
+        borderColor: globalStatus === "ABORTED" ? '#e74c3c' : globalStatus === "EXECUTED" ? '#2ecc71' : '#333',
+        opacity: isIdle ? 0 : 1
     }}>
       {/* FR-094: Command Summary Panel */}
       <div style={styles.summaryPanel}>
-        <h2 style={{ margin: 0, fontSize: '1.4rem', color: '#fff' }}>
-          {state.action?.toUpperCase()} <span style={{color: '#f1c40f'}}>{state.amount}</span>
-        </h2>
-        <div style={{ color: '#888', fontSize: '0.9rem', marginTop: '5px' }}>{state.target}</div>
+        {isIdle ? (
+          <>
+            <h2 style={{ margin: 0, fontSize: '1.2rem', color: '#e5e7eb' }}>Awaiting command</h2>
+            <div style={{ color: '#9aa0a6', fontSize: '0.9rem', marginTop: '6px' }}>{placeholderText}</div>
+          </>
+        ) : (
+          <>
+            <h2 style={{ margin: 0, fontSize: '1.4rem', color: '#fff' }}>
+              {state.action?.toUpperCase()} <span style={{color: '#f1c40f'}}>{state.amount}</span>
+            </h2>
+            <div style={{ color: '#888', fontSize: '0.9rem', marginTop: '5px' }}>{state.target}</div>
+          </>
+        )}
 
         {/* FR-093: Final Status Display */}
         <div style={{ marginTop: '10px', fontWeight: 'bold', fontSize: '1.1rem' }}>
@@ -55,6 +81,7 @@ export function CommandVisualizer() {
         <Node label="Voice Verification" data={steps.VERIFICATION} isFirst />
         <Node label="ENS Resolution" data={steps.ENS} />
         <Node label="Address Validation" data={steps.VALIDATION} />
+        <Node label="Contract Detection" data={steps.CONTRACT} />
         <Node label="Source Verification" data={steps.SOURCE} />
         <Node label="Kairo Security Scan" data={steps.KAIRO} />
         <Node label="Transaction Execution" data={steps.TX} isLast />
@@ -83,10 +110,22 @@ function Node({ label, data, isFirst, isLast }: { label: string, data?: { status
       icon = '⚡';
       connectorColor = '#f1c40f';
   }
+  if (data?.status === "WARN") {
+      color = '#f39c12';
+      icon = '!';
+      connectorColor = '#f39c12';
+      statusText = "WARNING";
+  }
   if (data?.status === "PASSED" || data?.status === "EXECUTED" || data?.status === "SUCCESS") {
       color = '#2ecc71';
       icon = '✓';
       connectorColor = '#2ecc71';
+  }
+  if (data?.status === "SKIPPED") {
+      color = '#666';
+      icon = '—';
+      connectorColor = '#555';
+      statusText = "SKIPPED";
   }
 
   // FR-092: Severed Connection styling
@@ -158,7 +197,7 @@ const styles: Record<string, React.CSSProperties> = {
     textAlign: 'left',
     boxShadow: '0 10px 30px rgba(0,0,0,0.5)',
     position: 'relative',
-    transition: 'border-color 0.5s ease'
+    transition: 'border-color 0.5s ease, opacity 0.3s ease'
   },
   summaryPanel: {
       borderBottom: '1px solid #222',
@@ -169,7 +208,7 @@ const styles: Record<string, React.CSSProperties> = {
       borderRadius: '8px'
   },
   pipeline: { position: 'relative', paddingLeft: '10px' },
-  nodeRow: { display: 'flex', position: 'relative', paddingBottom: '30px' },
+  nodeRow: { display: 'flex', position: 'relative', paddingBottom: '30px', cursor: 'default', userSelect: 'none', pointerEvents: 'none' },
   connector: {
     position: 'absolute',
     left: '14px',

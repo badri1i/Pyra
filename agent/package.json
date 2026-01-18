@@ -5,8 +5,9 @@
   "main": "index.js",
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1",
-    "dev": "tsx src/agent.ts dev",
-    "start": "tsx src/agent.ts start"
+    "dev": "tsx src/agent.ts connect --room pyra-room",
+    "start": "tsx src/agent.ts start",
+    "download": "livekit-agents download-files"
   },
   "keywords": [],
   "author": "",
@@ -14,6 +15,7 @@
   "type": "module",
   "dependencies": {
     "@livekit/agents": "^1.0.36",
+    "@livekit/agents-plugin-silero": "^1.0.36",
     "dotenv": "^17.2.3",
     "ethers": "^6.16.0",
     "zod": "^4.3.5"

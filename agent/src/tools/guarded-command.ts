@@ -2,6 +2,7 @@ import { llm } from '@livekit/agents';
 import { z } from 'zod';
 import { resolveEnsGate } from '../gates/ens.js';
 import { validateAddressGate } from '../gates/validation.js';
+import { contractDetectionGate } from '../gates/contract.js';
 import { sourceCheckGate } from '../gates/source.js';
 import { kairoScanGate } from '../gates/kairo.js';
 import { sendTransaction } from '../services/wallet.js';
@@ -30,10 +31,11 @@ export interface SessionState {
 }
 
 export const GuardedCommandSchema = z.object({
-  step: z.enum(['verify', 'check', 'execute']).describe(
+  step: z.enum(['verify', 'check', 'acknowledge', 'execute']).describe(
     'The current stage of the command flow. ' +
     'verify: Initial command verification (user speaks command). ' +
     'check: Run security checks (user says "yes" to verification). ' +
+    'acknowledge: User acknowledges Kairo warning before proceeding. ' +
     'execute: Execute transaction (user says "execute" after checks pass).'
   ),
 
@@ -159,6 +161,32 @@ export const executeGuardedCommandTool = llm.tool({
 
       await broadcast("GATE_UPDATE", { state: "PASSED", step: "VALIDATION" });
 
+      // --- GATE 3: CONTRACT DETECTION ---
+      await broadcast("GATE_UPDATE", { state: "RUNNING", step: "CONTRACT" });
+
+      const contractResult = await contractDetectionGate(resolvedAddress);
+      await broadcast("GATE_UPDATE", {
+        state: "PASSED",
+        step: "CONTRACT",
+        reason: contractResult.message
+      });
+
+      if (contractResult.data?.addressType === "EOA") {
+        await broadcast("GATE_UPDATE", { state: "SKIPPED", step: "SOURCE", reason: "EOA - no contract source" });
+        await broadcast("GATE_UPDATE", { state: "SKIPPED", step: "KAIRO", reason: "EOA - no contract scan" });
+
+        savedCommand.securityChecksPassed = true;
+        userData.warningAcknowledged = false;
+
+        const eoaMessage = `No contract detected. I am ready to ${savedCommand.action} ${savedCommand.amount}. Please confirm by saying 'execute' or 'proceed'.`;
+        ctx.ctx.session.say(eoaMessage, { addToChatCtx: true });
+
+        return {
+          status: "CHECKS_PASSED",
+          message: eoaMessage
+        };
+      }
+
       // --- GATE 3: SOURCE VERIFICATION ---
       await broadcast("GATE_UPDATE", { state: "RUNNING", step: "SOURCE" });
 
@@ -209,8 +237,8 @@ export const executeGuardedCommandTool = llm.tool({
         };
       }
 
-      // FR-070: BLOCK or WARN decision - immediate abort
-      if (kairoResult.kairoData.decision === "BLOCK" || kairoResult.kairoData.decision === "WARN") {
+      // FR-070: BLOCK decision - immediate abort
+      if (kairoResult.kairoData.decision === "BLOCK") {
         await broadcast("GATE_UPDATE", {
           state: "FAILED",
           step: "KAIRO",
@@ -233,6 +261,27 @@ export const executeGuardedCommandTool = llm.tool({
         };
       }
 
+      // WARN decision - require acknowledgement
+      if (kairoResult.kairoData.decision === "WARN") {
+        await broadcast("GATE_UPDATE", {
+          state: "WARN",
+          step: "KAIRO",
+          error: kairoResult.message,
+          issues: [kairoResult.data.vulnerability]
+        });
+
+        userData.kairoWarning = kairoResult;
+        userData.warningAcknowledged = false;
+
+        const warnMessage = `Kairo detected a warning: ${kairoResult.data.vulnerability}. Say "acknowledge" to proceed or "cancel" to abort.`;
+        ctx.ctx.session.say(warnMessage, { addToChatCtx: true });
+
+        return {
+          status: "WARN",
+          message: warnMessage
+        };
+      }
+
       // FR-071: ALLOW decision - proceed
       await broadcast("GATE_UPDATE", { state: "PASSED", step: "KAIRO", reason: kairoResult.message });
 
@@ -251,6 +300,33 @@ export const executeGuardedCommandTool = llm.tool({
       };
     }
 
+    // --- STEP 2B: ACKNOWLEDGE (Kairo Warning) ---
+    if (step === 'acknowledge') {
+      if (!userData.kairoWarning) {
+        return {
+          status: "ERROR",
+          message: "No Kairo warning to acknowledge."
+        };
+      }
+
+      userData.warningAcknowledged = true;
+      savedCommand.securityChecksPassed = true;
+
+      await broadcast("GATE_UPDATE", {
+        state: "PASSED",
+        step: "KAIRO",
+        reason: "Warning acknowledged by user"
+      });
+
+      const confirmationMessage = `Warning acknowledged. I am ready to ${savedCommand.action} ${savedCommand.amount}. Please confirm by saying 'execute' or 'proceed'.`;
+      ctx.ctx.session.say(confirmationMessage, { addToChatCtx: true });
+
+      return {
+        status: "CHECKS_PASSED",
+        message: confirmationMessage
+      };
+    }
+
     // --- STEP 3: EXECUTE (Transaction) ---
     // FR-081: Explicitly requires 'execute' step and prior checks
     if (step === 'execute') {
@@ -261,20 +337,21 @@ export const executeGuardedCommandTool = llm.tool({
         };
       }
 
+      if (userData.kairoWarning && !userData.warningAcknowledged) {
+        return {
+          status: "ERROR",
+          message: "Kairo warning not acknowledged. Please say 'acknowledge' to proceed."
+        };
+      }
+
       console.log('[Tool] Step 3 (Execute) - Executing Transaction');
 
       await broadcast("GATE_UPDATE", { state: "RUNNING", step: "TX" });
 
       // Extract numeric amount
       const numericAmount = savedCommand.amount.replace(/[^0-9.]/g, '');
-
-      // FR-084: Execute transaction
       const tx = await sendTransaction(savedCommand.finalAddress, numericAmount);
-
-      // FR-084: Format hash to first 8 characters (e.g., "0x123456")
       const shortHash = tx.hash.slice(0, 8);
-
-      // FR-085: Success State
       await broadcast("GATE_UPDATE", {
         state: "SUCCESS",
         step: "TX",
@@ -285,13 +362,12 @@ export const executeGuardedCommandTool = llm.tool({
         target: savedCommand.finalAddress
       });
 
-      // Clear state
       delete userData.pendingCommand;
       userData.awaitingConfirmation = false;
       userData.confirmed = false;
       userData.warningAcknowledged = false;
+      userData.kairoWarning = undefined;
 
-      // FR-084: Audio Response with exact hash format
       const executionMessage = `Executing transaction... Transaction submitted. Hash: ${shortHash}...`;
       ctx.ctx.session.say(executionMessage, { addToChatCtx: true });
 

@@ -1,6 +1,6 @@
 import { config } from '../config.js';
 
-const BASE_URL = 'https://api-sepolia.etherscan.io/api'; // Default to Sepolia for testing
+const BASE_URL = 'https://api.etherscan.io/v2/api'; // Etherscan API v2
 
 export interface ContractSource {
   verified: boolean;
@@ -41,11 +41,13 @@ export async function fetchContractSource(address: string): Promise<ContractSour
     return { verified: true, sourceCode: "// Simulated Source", name: "SimulatedContract" };
   }
 
-  const url = `${BASE_URL}?module=contract&action=getsourcecode&address=${address}&apikey=${config.ETHERSCAN_API_KEY}`;
+  const url = `${BASE_URL}?chainid=${config.CHAIN_ID}&module=contract&action=getsourcecode&address=${address}&apikey=${config.ETHERSCAN_API_KEY}`;
 
+  const start = Date.now();
   try {
     const response = await fetch(url);
     const data = await response.json();
+    console.log(`[Etherscan] API responded in ${Date.now() - start}ms for ${address}`);
 
     if (data.status === "1" && data.result[0]) {
       const result = data.result[0];
@@ -61,7 +63,30 @@ export async function fetchContractSource(address: string): Promise<ContractSour
 
     return { verified: false, sourceCode: "", name: "Unknown" };
   } catch (e) {
-    console.error("[Etherscan] API Error:", e);
+    console.error(`[Etherscan] API Error after ${Date.now() - start}ms:`, e);
     return { verified: false, sourceCode: "", name: "Error" };
+  }
+}
+
+export async function checkEtherscanHealth(): Promise<void> {
+  if (!config.ETHERSCAN_API_KEY) {
+    console.warn('[Etherscan] No API Key. Skipping Etherscan health check.');
+    return;
+  }
+
+  const url = `${BASE_URL}?chainid=${config.CHAIN_ID}&module=stats&action=ethprice&apikey=${config.ETHERSCAN_API_KEY}`;
+  const start = Date.now();
+
+  try {
+    const response = await fetch(url);
+    const data = await response.json();
+    const ok = response.ok && data?.status === "1";
+    if (ok) {
+      console.log(`[Etherscan] Health check ok in ${Date.now() - start}ms`);
+    } else {
+      console.warn(`[Etherscan] Health check failed in ${Date.now() - start}ms (status ${response.status})`, data);
+    }
+  } catch (error) {
+    console.error(`[Etherscan] Health check error after ${Date.now() - start}ms:`, error);
   }
 }

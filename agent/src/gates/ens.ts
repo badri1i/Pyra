@@ -30,6 +30,7 @@ export async function resolveEnsGate(target: string): Promise<GateResult> {
   }
 
   console.log(`[Gate:ENS] Resolving ${target}...`);
+  const start = Date.now();
 
   try {
     // 2. Resolve Name (FR-031)
@@ -43,7 +44,7 @@ export async function resolveEnsGate(target: string): Promise<GateResult> {
       };
     }
 
-    console.log(`[Gate:ENS] Resolved to ${address}`);
+    console.log(`[Gate:ENS] Resolved to ${address} in ${Date.now() - start}ms`);
 
     return {
       passed: true,
@@ -52,7 +53,7 @@ export async function resolveEnsGate(target: string): Promise<GateResult> {
     };
 
   } catch (error) {
-    console.error('[Gate:ENS] Error:', error);
+    console.error(`[Gate:ENS] Error after ${Date.now() - start}ms:`, error);
     return {
       passed: false,
       message: `ENS Resolution Error: ${error instanceof Error ? error.message : 'Unknown error'}`

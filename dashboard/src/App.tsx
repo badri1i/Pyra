@@ -6,10 +6,12 @@ import {
   ControlBar,
   useTracks,
   useConnectionState,
+  useTrackVolume,
 } from '@livekit/components-react';
 import { Track, ConnectionState } from 'livekit-client';
 import { useState } from 'react';
 import { CommandVisualizer } from './components/CommandVisualizer';
+import { TranscriptPanel } from './components/TranscriptPanel';
 
 const serverUrl = import.meta.env.VITE_LIVEKIT_URL;
 const token = import.meta.env.VITE_LIVEKIT_TOKEN;
@@ -41,6 +43,7 @@ export default function App() {
           audio={true}
           token={token}
           serverUrl={serverUrl}
+          onDisconnected={() => setConnected(false)}
           data-lk-theme="default"
           style={styles.roomContainer}
         >
@@ -54,6 +57,15 @@ export default function App() {
 function RoomContent() {
   const connectionState = useConnectionState();
   const tracks = useTracks([Track.Source.Microphone]);
+  const audioTracks = useTracks([Track.Source.Microphone, Track.Source.ScreenShareAudio, Track.Source.Unknown]);
+  const agentAudioTrack = audioTracks.find(
+    (track) => !track.participant.isLocal && track.publication.kind === Track.Kind.Audio
+  );
+  const ringTrack = agentAudioTrack;
+  const ringLevel = useTrackVolume(ringTrack);
+  const ringIntensity = Math.min(1, ringLevel * 3);
+  const ringScale = 1 + ringIntensity * 0.25;
+  const ringOpacity = 0.2 + ringIntensity * 0.55;
 
   if (connectionState === ConnectionState.Connecting) {
     return (
@@ -71,19 +83,34 @@ function RoomContent() {
         <CommandVisualizer />
       </div>
 
+      {/* Transcript (Top Right) */}
+      <div style={styles.transcriptLayer}>
+        <TranscriptPanel />
+      </div>
+
       {/* Voice Orb (Center) */}
       <div style={styles.voiceLayer}>
         <div style={styles.orbContainer}>
-          <div style={styles.glowRing} />
-          <div style={styles.innerOrb}>
+          <div
+            style={{
+              ...styles.glowRing,
+              transform: `scale(${ringScale})`,
+              opacity: ringOpacity,
+              boxShadow: `0 0 ${40 + ringIntensity * 40}px rgba(52, 152, 219, ${0.25 + ringIntensity * 0.35})`,
+            }}
+          />
+          <div style={styles.voiceCore}>
             {tracks.length > 0 ? (
-              <BarVisualizer
-                barCount={5}
-                trackRef={tracks[0]}
-                style={{ height: '60px', width: '80px' }}
-              />
+              <>
+                <BarVisualizer
+                  barCount={5}
+                  trackRef={tracks[0]}
+                  style={{ height: '60px', width: '80px' }}
+                />
+                <span style={styles.micIcon}>🎙️</span>
+              </>
             ) : (
-              <span style={{ fontSize: '2rem', opacity: 0.5 }}>🎙️</span>
+              <span style={styles.micIcon}>🎙️</span>
             )}
           </div>
         </div>
@@ -118,9 +145,9 @@ const styles: Record<string, React.CSSProperties> = {
   appContainer: {
     height: '100vh',
     width: '100vw',
-    background: 'radial-gradient(ellipse at center, #1a1a2e 0%, #0a0a0f 100%)',
+    background: 'radial-gradient(ellipse at 20% 10%, #242424 0%, #111 55%, #060606 100%)',
     color: '#fff',
-    fontFamily: 'system-ui, sans-serif',
+    fontFamily: '"Space Grotesk", "IBM Plex Sans", "Segoe UI", sans-serif',
     overflow: 'hidden',
   },
   connectScreen: {
@@ -137,7 +164,6 @@ const styles: Record<string, React.CSSProperties> = {
     height: '200px',
     borderRadius: '50%',
     background: 'radial-gradient(circle, rgba(52, 152, 219, 0.2) 0%, transparent 70%)',
-    animation: 'pulseGlow 3s infinite ease-in-out',
   },
   title: {
     fontSize: '4rem',
@@ -197,14 +223,22 @@ const styles: Record<string, React.CSSProperties> = {
     top: '30px',
     zIndex: 10,
   },
+  transcriptLayer: {
+    position: 'absolute',
+    top: '30px',
+    right: '30px',
+    zIndex: 9,
+  },
   voiceLayer: {
     zIndex: 1,
     marginTop: '100px',
   },
   statusLayer: {
     position: 'absolute',
-    bottom: '100px',
+    bottom: '120px',
+    left: '30px',
     zIndex: 10,
+    transform: 'rotate(-2deg)',
   },
   controlsLayer: {
     position: 'absolute',
@@ -225,31 +259,32 @@ const styles: Record<string, React.CSSProperties> = {
     height: '200px',
     borderRadius: '50%',
     background: 'radial-gradient(circle, rgba(52, 152, 219, 0.3) 0%, transparent 70%)',
-    animation: 'pulseGlow 3s infinite ease-in-out',
+    transition: 'transform 0.08s ease, opacity 0.08s ease, box-shadow 0.08s ease',
   },
-  innerOrb: {
-    width: '120px',
-    height: '120px',
-    borderRadius: '50%',
-    background: 'linear-gradient(135deg, #1a1a2e 0%, #0a0a15 100%)',
-    border: '2px solid #3498db',
+  voiceCore: {
     display: 'flex',
     alignItems: 'center',
     justifyContent: 'center',
-    boxShadow: '0 0 40px rgba(52, 152, 219, 0.3)',
+    gap: '8px',
+  },
+  micIcon: {
+    fontSize: '1.6rem',
+    opacity: 0.6,
+    lineHeight: 1,
   },
   statusBadge: {
     display: 'flex',
     alignItems: 'center',
     gap: '10px',
     padding: '10px 20px',
-    borderRadius: '30px',
-    border: '1px solid #3498db',
-    background: 'rgba(0,0,0,0.5)',
-    color: '#3498db',
+    borderRadius: '24px',
+    border: '1px solid rgba(255,255,255,0.2)',
+    background: 'linear-gradient(120deg, rgba(255,255,255,0.18), rgba(255,255,255,0.04))',
+    color: '#e5e7eb',
     fontSize: '0.9rem',
     textTransform: 'uppercase',
     letterSpacing: '1px',
+    boxShadow: '0 14px 30px rgba(0,0,0,0.45), inset 0 0 0 1px rgba(255,255,255,0.08)',
   },
   statusDot: {
     width: '8px',

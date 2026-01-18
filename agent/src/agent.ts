@@ -1,16 +1,24 @@
-import { type JobContext, WorkerOptions, cli, defineAgent, voice } from '@livekit/agents';
+import { type JobContext, type JobProcess, WorkerOptions, cli, defineAgent, voice } from '@livekit/agents';
 import * as path from 'path';
 import * as dotenv from 'dotenv';
 import { fileURLToPath } from 'url';
+import * as silero from '@livekit/agents-plugin-silero';
 import { executeGuardedCommandTool, type SessionState } from './tools/guarded-command.js';
+import { runStartupHealthChecks } from './services/health.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const envPath = path.join(__dirname, '../.env');
 dotenv.config({ path: envPath });
 
 export default defineAgent({
+  prewarm: async (proc: JobProcess) => {
+    proc.userData.vad = await silero.VAD.load();
+  },
   entry: async (ctx: JobContext) => {
+    console.log('[Agent] Entry started');
     await ctx.connect();
+    console.log('[Agent] Connected to room');
+    void runStartupHealthChecks();
 
     const userData: SessionState = {
       awaitingConfirmation: false,
@@ -20,7 +28,9 @@ export default defineAgent({
     };
     ctx.userData = userData;
 
+    console.log('[Agent] Waiting for participant');
     const participant = await ctx.waitForParticipant();
+    console.log(`[Agent] Participant connected: ${participant.identity}`);
 
     const agent = new voice.Agent({
       instructions: `You are PYRA, a secure crypto transaction assistant.
@@ -52,6 +62,14 @@ export default defineAgent({
         a) Repeat that EXACT message to the user
         b) WAIT for the user to say "execute" or "proceed"
         c) DO NOT proceed to step 3 until user confirms
+      - If the tool returns a Kairo warning message, you MUST:
+        a) Ask the user to say "acknowledge" to proceed or "cancel" to abort
+        b) Call 'execute_guarded_command' with step='acknowledge' only if the user says "acknowledge"
+
+      **STEP 2B: ACKNOWLEDGE (Kairo Warning)**
+      When user says "acknowledge":
+      - Call 'execute_guarded_command' with step='acknowledge'
+      - The tool will confirm and prompt for "execute" or "proceed"
 
       **STEP 3: EXECUTE (Transaction Execution)**
       When user says "Execute" or "Proceed" (ONLY after security checks have passed):
@@ -70,7 +88,9 @@ export default defineAgent({
       }
     });
 
+    const vad = ctx.proc.userData.vad as silero.VAD | undefined;
     const session = new voice.AgentSession({
+      vad,
       stt: "assemblyai/universal-streaming:en",
       llm: "openai/gpt-4o-mini",
       tts: "cartesia/sonic-3:9626c31c-bec5-4cca-baa8-f8ba9e84c8bc",
@@ -82,10 +102,12 @@ export default defineAgent({
         agent: agent,
         inputOptions: { participantIdentity: participant.identity }
     });
+    console.log('[Agent] Session started');
 
     session.generateReply({
       instructions: "Greet the user and ask for a command.",
     });
+    console.log('[Agent] Initial greeting queued');
   },
 });
 
