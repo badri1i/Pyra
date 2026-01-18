@@ -74,7 +74,10 @@ process.on('SIGTERM', () => {
 
 export default defineAgent({
   prewarm: async (proc: JobProcess) => {
-    proc.userData.vad = await silero.VAD.load();
+    proc.userData.vad = await silero.VAD.load({
+      activationThreshold: 0.7,
+      minSpeechDuration: 150,
+    });
   },
   entry: async (ctx: JobContext) => {
     if (!acquireAgentLock()) return;
