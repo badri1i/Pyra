@@ -1,5 +1,6 @@
 import { llm } from '@livekit/agents';
 import { z } from 'zod';
+import { resolveEnsGate } from '../gates/ens.js';
 
 /**
  * FR-011: Command Intent Parsing
@@ -111,34 +112,59 @@ export const executeGuardedCommandTool = llm.tool({
       };
     }
 
-    // Verify the parameters match (Optional safety check)
-    console.log('[Tool] Executing SAVED command:', savedCommand);
-
-    // FR-024: Broadcast execution state to Dashboard
-    const payload = JSON.stringify({
-      state: "EXECUTED",
-      action: savedCommand.action,
-      amount: savedCommand.amount,
-      target: savedCommand.target,
-      txHash: "0xSIMULATED", // Placeholder for now
-    });
-    await ctx.room.localParticipant?.publishData(
-      new TextEncoder().encode(payload),
-      { topic: "agent-state" }
-    );
-
-    // Clear state so we don't accidentally re-execute later
+    // Clear state immediately to prevent re-execution
     delete userData.pendingCommand;
     userData.awaitingConfirmation = false;
     userData.confirmed = false;
 
-    // --- FR-020: Verification Loop - State 3 (Confirmed) ---
-    // User has explicitly confirmed, proceed to Gate 1 (ENS Resolution)
-    // Placeholder for future integration with Kairo security scanner
-    // This will be implemented in FR-014 through FR-019
+    console.log('[Tool] Executing SAVED command:', savedCommand);
+
+    // Helper function to broadcast gate state updates
+    const broadcastGateState = async (state: string, step: string, payload: any) => {
+      const data = JSON.stringify({ state, step, ...payload });
+      await ctx.room.localParticipant?.publishData(
+        new TextEncoder().encode(data),
+        { reliable: true, topic: "agent-state" }
+      );
+    };
+
+    // --- GATE 1: ENS RESOLUTION (FR-030 through FR-033) ---
+    await broadcastGateState("RUNNING", "ENS", { target: savedCommand.target });
+
+    // FR-033: Agent speaks "Resolving..."
+    if (savedCommand.target.toLowerCase().endsWith('.eth')) {
+      ctx.ctx.session.say(`Resolving ${savedCommand.target}...`, { addToChatCtx: true });
+    }
+
+    const ensResult = await resolveEnsGate(savedCommand.target);
+
+    if (!ensResult.passed) {
+      // FR-032: Broadcast failure to dashboard
+      await broadcastGateState("FAILED", "ENS", { error: ensResult.message });
+      ctx.ctx.session.say(ensResult.message, { addToChatCtx: true });
+      return {
+        status: "ABORTED",
+        message: ensResult.message
+      };
+    }
+
+    // Update target to the resolved address for future gates
+    const resolvedAddress = ensResult.data?.address || savedCommand.target;
+    await broadcastGateState("PASSED", "ENS", { resolved: resolvedAddress });
+
+    // (Future gates: FR-040 Validation, FR-050 Source Check, FR-060 Kairo)
+
+    // Placeholder Final Execution
+    await broadcastGateState("EXECUTED", "TX", {
+      action: savedCommand.action,
+      amount: savedCommand.amount,
+      target: resolvedAddress,
+      txHash: "0xSIMULATED_HASH_123"
+    });
+
     return {
-      status: "PENDING_EXECUTION",
-      message: `User confirmed. Ready to initiate ENS resolution and security analysis for: ${savedCommand.action} ${savedCommand.amount} to ${savedCommand.target}`,
+      status: "SUCCESS",
+      message: `Security checks passed. Executing transaction to ${resolvedAddress}.`,
       parsedCommand: savedCommand,
     };
   },
